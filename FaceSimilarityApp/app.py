@@ -217,7 +217,7 @@ st.title(
     "Deteksi Kemiripan Wajah Menggunakan PCA-SVD"
 )
 
-DATASET_PATH = "rendra9187114-a11y/deteksi-kemiripan-wajah-app/main/FaceSimilarityApp/dataset"
+DATASET_PATH = "FaceSimilarityApp/dataset"
 
 if not os.path.exists(DATASET_PATH):
 
