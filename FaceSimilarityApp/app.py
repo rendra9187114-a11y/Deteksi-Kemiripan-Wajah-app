@@ -369,7 +369,7 @@ with st.sidebar:
     st.markdown(
         f'<div style="{step_style}"><div style="{num_style}">1</div><span style="{txt_style}">Gambar diproyeksikan ke ruang eigenface via PCA-SVD</span></div>'
         f'<div style="{step_style}"><div style="{num_style}">2</div><span style="{txt_style}">Kemiripan dihitung dengan cosine similarity terhadap dataset</span></div>'
-        f'<div style="{step_style}"><div style="{num_style}">3</div><span style="{txt_style}">Top-3 wajah paling mirip akan ditampilkan dengan skornya</span></div>'
+        f'<div style="{step_style}"><div style="{num_style}">3</div><span style="{txt_style}">Top-1 dengan wajah paling mirip akan ditampilkan beserta skornya</span></div>'
         f'</div>',
         unsafe_allow_html=True
     )
