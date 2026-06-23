@@ -220,7 +220,7 @@ st.markdown(css, unsafe_allow_html=True)
 if not st.session_state.theme_override:
     st.markdown(THEME_DETECT_JS, unsafe_allow_html=True)
 
-def compress_image_pca(image, n_components=50):
+def compress_image_pca(image, n_components=150):
     img_gray = image.convert("L")
     matrix = np.array(img_gray).astype(float)
     matrix_norm = matrix / 255.0
@@ -238,27 +238,7 @@ def compress_image_pca(image, n_components=50):
 
 def preprocess_image(path, img_size=(100, 100)):
     img = cv2.imread(path)
-    if img is None:
-        raise ValueError(f"Gagal membaca gambar: {path}")
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    face_cascade = cv2.CascadeClassifier(
-        cv2.data.haarcascades +
-        "haarcascade_frontalface_default.xml"
-    )
-    faces = face_cascade.detectMultiScale(
-        gray,
-        scaleFactor=1.1,
-        minNeighbors=5,
-        minSize=(30, 30)
-    )
-    if len(faces) > 0:
-        x, y, w, h = max(
-            faces,
-            key=lambda f: f[2] * f[3]
-        )
-        # crop wajah
-        gray = gray[y:y+h, x:x+w]
-    gray = cv2.equalizeHist(gray)
     gray = cv2.resize(gray, img_size)
     return gray.flatten()
 
@@ -294,7 +274,7 @@ def extract_feature(image_path, mean_face, eigenfaces, img_size=(100, 100)):
     centered = vector - mean_face
     return np.dot(centered, eigenfaces.T)
 
-def recognize_cosine_topk(test_feature, database_features, labels, filenames, k=2):
+def recognize_cosine_topk(test_feature, database_features, labels, filenames, k=1):
     results = []
     test_feature = test_feature.reshape(1, -1)
     for feature, label, file in zip(database_features, labels, filenames):
@@ -502,14 +482,13 @@ if uploaded_file:
 
     with st.spinner("Menghitung kemiripan di ruang eigenface..."):
         test_feature = extract_feature(temp_buffer.name, mean_face, eigenfaces, IMG_SIZE)
-        results = recognize_cosine_topk(test_feature, database_features, labels, filenames, k=2)
+        results = recognize_cosine_topk(test_feature, database_features, labels, filenames, k=1)
 
     badge_info = [
         ("gold",   "★ Kecocokan Terbaik"),
-        ("silver", "◈ Peringkat 2"),
     ]
 
-    res_cols = st.columns(2, gap="medium")
+    res_cols = st.columns(3, gap="medium")
     for i, (lbl, file, score) in enumerate(results):
         with res_cols[i]:
             img_path = os.path.join(DATASET_PATH, lbl, file)
