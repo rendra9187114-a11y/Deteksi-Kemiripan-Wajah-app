@@ -514,7 +514,6 @@ if uploaded_file:
                 f'<span class="score-label-text">Kemiripan</span>'
                 f'<span class="score-number">{score:.4f}</span>'
                 f'</div>'
-                f'<div class="score-track"><div class="score-fill" style="width:{pct}%;"></div></div>'
                 f'</div></div>',
                 unsafe_allow_html=True
             )
