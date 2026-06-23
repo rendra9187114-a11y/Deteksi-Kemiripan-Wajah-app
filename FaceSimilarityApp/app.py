@@ -298,6 +298,7 @@ def load_dataset(dataset_path, img_size=(100, 100)):
             if file.lower().endswith((".jpg", ".jpeg", ".png")):
                 path = os.path.join(person_folder, file)
                 vector = preprocess_image_color(path, img_size)
+                vector = preprocess_image(path, img_size)
                 data.append(vector)
                 labels.append(person_name)
                 filenames.append(file)
