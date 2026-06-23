@@ -384,7 +384,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-DATASET_PATH = "dataset"
+DATASET_PATH = "FaceSimilarityApp\dataset"
 IMG_SIZE = (100, 100)
 
 if not os.path.exists(DATASET_PATH):
