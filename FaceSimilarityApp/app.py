@@ -527,8 +527,8 @@ if menu == "EDA & Evaluasi":
     
     st.header("Laporan Model")
     st.write("Kalau muncul")
-    st.write("(IndexError: index 109 is out of bounds for axis 0 with size 48)")
-    st.write("turunkan bar komponen pca dibawah'with size 48'")
+    st.write("(IndexError: ...)")
+    st.write("turunkan bar komponen pca dibawah jumlah data 'latih'")
 
     st.write(
         f"Total Data : {len(X)} gambar"
