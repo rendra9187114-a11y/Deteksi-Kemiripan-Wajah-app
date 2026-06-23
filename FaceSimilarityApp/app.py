@@ -436,7 +436,7 @@ with st.sidebar:
     )
 
     jumlah_komponen = st.slider(
-        label="", min_value=10, max_value=150, value=75, step=1,
+        label="", min_value=1, max_value=150, value=12, step=1,
         label_visibility="collapsed"
     )
     
