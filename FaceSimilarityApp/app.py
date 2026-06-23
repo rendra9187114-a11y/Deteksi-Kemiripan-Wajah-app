@@ -6,6 +6,9 @@ import tempfile
 
 from PIL import Image
 from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.model_selection import train_test_split
+from scipy.spatial.distance import euclidean
+import matplotlib.pyplot as plt
 
 st.set_page_config(
     page_title="Deteksi Kemiripan Wajah",
@@ -220,27 +223,69 @@ st.markdown(css, unsafe_allow_html=True)
 if not st.session_state.theme_override:
     st.markdown(THEME_DETECT_JS, unsafe_allow_html=True)
 
-def compress_image_pca(image, n_components=150):
-    img_gray = image.convert("L")
-    matrix = np.array(img_gray).astype(float)
-    matrix_norm = matrix / 255.0
-    mean = np.mean(matrix_norm, axis=0)
-    centered = matrix_norm - mean
-    cov = np.cov(centered, rowvar=False)
-    eigvals, eigvecs = np.linalg.eigh(cov)
-    idx = np.argsort(eigvals)[::-1]
-    eigvecs = eigvecs[:, idx]
-    components = eigvecs[:, :n_components]
-    projected = np.dot(centered, components)
-    reconstructed = np.dot(projected, components.T) + mean
-    reconstructed = np.clip(reconstructed * 255, 0, 255).astype(np.uint8)
-    return Image.fromarray(reconstructed)
+
+# ── KOMPRESI PCA BERWARNA (RGB) ──────────────────────────────────────────────
+def compress_image_pca_color(image, n_components=150):
+    """Kompresi PCA per channel RGB, hasil tetap berwarna."""
+    img_rgb = image.convert("RGB")
+    arr = np.array(img_rgb).astype(float) / 255.0  # (H, W, 3)
+
+    channels = []
+    for c in range(3):
+        matrix = arr[:, :, c]
+        mean = np.mean(matrix, axis=0)
+        centered = matrix - mean
+        cov = np.cov(centered, rowvar=False)
+        eigvals, eigvecs = np.linalg.eigh(cov)
+        idx = np.argsort(eigvals)[::-1]
+        eigvecs = eigvecs[:, idx]
+        components = eigvecs[:, :n_components]
+        projected = np.dot(centered, components)
+        reconstructed = np.dot(projected, components.T) + mean
+        reconstructed = np.clip(reconstructed * 255, 0, 255).astype(np.uint8)
+        channels.append(reconstructed)
+
+    color_img = np.stack(channels, axis=2)
+    return Image.fromarray(color_img)
+
+
+# ── PREPROCESSING UNTUK PENCOCOKAN: BERWARNA (RGB flatten) ───────────────────
+def preprocess_image_color(path, img_size=(100, 100)):
+    """Baca gambar berwarna, resize, dan flatten menjadi vektor."""
+    img = cv2.imread(path)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)   # BGR → RGB
+    img = cv2.resize(img, img_size)
+    return img.flatten().astype(float)            # panjang = 100*100*3 = 30000
 
 def preprocess_image(path, img_size=(100, 100)):
     img = cv2.imread(path)
+    if img is None:
+        raise ValueError(f"Gagal membaca gambar: {path}")
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    gray = cv2.resize(gray, img_size)
-    return gray.flatten()
+    face_cascade = cv2.CascadeClassifier(
+        cv2.data.haarcascades +
+        "haarcascade_frontalface_default.xml"
+    )
+    faces = face_cascade.detectMultiScale(
+        gray,
+        scaleFactor=1.1,
+        minNeighbors=5,
+        minSize=(30, 30)
+    )
+    # Konversi ke RGB
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    if len(faces) > 0:
+        x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
+        img_rgb = img_rgb[y:y+h, x:x+w]
+    # Histogram equalization per channel RGB
+    r, g, b = cv2.split(img_rgb)
+    r = cv2.equalizeHist(r)
+    g = cv2.equalizeHist(g)
+    b = cv2.equalizeHist(b)
+    img_rgb = cv2.merge([r, g, b])
+
+    img_rgb = cv2.resize(img_rgb, img_size)
+    return img_rgb.flatten().astype(float)
 
 @st.cache_resource(show_spinner=False)
 def load_dataset(dataset_path, img_size=(100, 100)):
@@ -252,7 +297,7 @@ def load_dataset(dataset_path, img_size=(100, 100)):
         for file in os.listdir(person_folder):
             if file.lower().endswith((".jpg", ".jpeg", ".png")):
                 path = os.path.join(person_folder, file)
-                vector = preprocess_image(path, img_size)
+                vector = preprocess_image_color(path, img_size)
                 data.append(vector)
                 labels.append(person_name)
                 filenames.append(file)
@@ -264,13 +309,16 @@ def center_data(X):
 
 def compute_pca_svd(X_centered, num_components=50):
     U, S, VT = np.linalg.svd(X_centered, full_matrices=False)
+    max_components = min(num_components, VT.shape[0])
     return VT[:num_components]
+
 
 def project_faces(X_centered, eigenfaces):
     return np.dot(X_centered, eigenfaces.T)
 
 def extract_feature(image_path, mean_face, eigenfaces, img_size=(100, 100)):
-    vector = preprocess_image(image_path, img_size)
+    """Ekstrak fitur dari gambar berwarna."""
+    vector = preprocess_image_color(image_path, img_size)
     centered = vector - mean_face
     return np.dot(centered, eigenfaces.T)
 
@@ -284,28 +332,80 @@ def recognize_cosine_topk(test_feature, database_features, labels, filenames, k=
     results.sort(key=lambda x: x[2], reverse=True)
     return results[:k]
 
+def compute_pca_svd_variance(X_centered):
+    U, S, VT = np.linalg.svd(
+        X_centered,
+        full_matrices=False
+    )
+    explained_variance = (
+        S**2
+    ) / np.sum(S**2)
+    cumulative_variance = np.cumsum(
+        explained_variance
+    )
+    return VT, cumulative_variance
 
+def predict_cosine(
+    test_feature,
+    database_features,
+    labels
+):
+    scores = cosine_similarity(
+        test_feature.reshape(1, -1),
+        database_features
+    )[0]
+    idx = np.argmax(scores)
+    return labels[idx]
+
+
+def predict_euclidean(
+    test_feature,
+    database_features,
+    labels
+):
+    distances = []
+    for feature in database_features:
+        distances.append(
+            euclidean(
+                test_feature,
+                feature
+            )
+        )
+    idx = np.argmin(distances)
+    return labels[idx]
+
+
+def show_mean_face(
+    mean_face
+):
+    mean_img = mean_face.reshape(
+        IMG_SIZE[0],
+        IMG_SIZE[1],
+        3
+    ).astype(np.uint8)
+    st.image(
+        mean_img,
+        caption="Mean Face Dataset",
+        width=300
+    )
+
+# ── SIDEBAR ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-
     col_toggle, col_space = st.columns([1.5, 4])
     
     with col_toggle:
         toggle_icon = "☀️" if is_dark else "🌙"
         toggle_help = "Beralih ke Light Mode" if is_dark else "Beralih ke Dark Mode"
-        
-        # MENGGUNAKAN ON_CLICK AGAR FILE TIDAK HILANG
         st.button(
-            toggle_icon, 
-            key="theme_toggle", 
-            help=toggle_help, 
+            toggle_icon,
+            key="theme_toggle",
+            help=toggle_help,
             use_container_width=True,
-            on_click=switch_theme 
+            on_click=switch_theme
         )
-
     btn_bg = "rgba(250,204,21,0.18)" if is_dark else "rgba(99,102,241,0.22)"
     btn_border = "rgba(250,204,21,0.6)" if is_dark else "rgba(99,102,241,0.6)"
     btn_shadow = "0 0 10px rgba(250,204,21,0.35)" if is_dark else "0 0 10px rgba(99,102,241,0.4)"
-
     st.markdown(f"""
     <style>
     [data-testid="stSidebar"] button[kind="secondary"] {{
@@ -336,10 +436,17 @@ with st.sidebar:
     )
 
     jumlah_komponen = st.slider(
-        label="", min_value=10, max_value=150, value=75, step=5,
+        label="", min_value=10, max_value=150, value=75, step=1,
         label_visibility="collapsed"
     )
-
+    
+    menu = st.radio(
+        "Menu",
+        [
+            "Deteksi Wajah",
+            "EDA & Evaluasi"
+        ]
+    )
     st.markdown(
         f'<div style="background:{accent_dim};border:1px solid {border};border-radius:10px;padding:1rem;margin-top:0.8rem;">'
         f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.65rem;color:{accent};'
@@ -367,29 +474,49 @@ with st.sidebar:
     txt_style = f'color:{text_muted};font-size:0.78rem;line-height:1.4;'
 
     st.markdown(
-        f'<div style="{step_style}"><div style="{num_style}">1</div><span style="{txt_style}">Gambar diproyeksikan ke ruang eigenface via PCA-SVD</span></div>'
+        f'<div style="{step_style}"><div style="{num_style}">1</div><span style="{txt_style}">Gambar berwarna diproyeksikan ke ruang eigenface via PCA-SVD (RGB)</span></div>'
         f'<div style="{step_style}"><div style="{num_style}">2</div><span style="{txt_style}">Kemiripan dihitung dengan cosine similarity terhadap dataset</span></div>'
         f'<div style="{step_style}"><div style="{num_style}">3</div><span style="{txt_style}">Top-1 dengan wajah paling mirip akan ditampilkan beserta skornya</span></div>'
         f'</div>',
         unsafe_allow_html=True
     )
 
+# ── HERO ──────────────────────────────────────────────────────────────────────
 st.markdown(
     f'<div class="hero-header">'
     f'<div class="hero-badge">⬡ PCA · SVD · Cosine Similarity</div>'
     f'<div class="hero-title">Deteksi Kemiripan Wajah</div>'
-    f'<div class="hero-subtitle">Kompresi gambar dengan Principal Component Analysis dan temukan '
+    f'<div class="hero-subtitle">Kompresi gambar berwarna dengan Principal Component Analysis dan temukan '
     f'identitas wajah terdekat dari dataset menggunakan eigenface projection.</div>'
     f'</div>',
     unsafe_allow_html=True
 )
 
-DATASET_PATH = "FaceSimilarityApp/dataset"
+DATASET_PATH = "dataset"
+DATASET_LATIH = "dataset_latih_uji"
 IMG_SIZE = (100, 100)
 
 if not os.path.exists(DATASET_PATH):
     st.error("⚠️ Direktori `dataset` tidak ditemukan. Pastikan folder tersedia di lokasi yang sama dengan skrip ini.")
     st.stop()
+    
+if not os.path.exists(DATASET_LATIH):
+    st.error("⚠️ Direktori `dataset` tidak ditemukan. Pastikan folder tersedia di lokasi yang sama dengan skrip ini.")
+    st.stop()
+
+X, labels, filenames = load_dataset(
+    DATASET_LATIH,
+    IMG_SIZE
+)
+
+X_train, X_test, y_train, y_test, train_files, test_files = train_test_split(
+    X,
+    labels,
+    filenames,
+    test_size=0.2,
+    stratify=labels,
+    random_state=42
+)
 
 st.markdown(
     f'<div class="section-label">'
@@ -400,6 +527,132 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+if menu == "EDA & Evaluasi":
+    
+    st.header("Laporan Model")
+
+    st.write(
+        f"Total Data : {len(X)} gambar"
+    )
+
+    st.write(
+        f"Data Latih (80%) : {len(X_train)} gambar"
+    )
+
+    st.write(
+        f"Data Uji (20%) : {len(X_test)} gambar"
+    )
+
+    X_centered_train, mean_face = center_data(
+        X_train
+    )
+
+    eigenfaces_all, cumulative_variance = (
+        compute_pca_svd_variance(
+            X_centered_train
+        )
+    )
+
+    max_components = len(cumulative_variance)
+    explained_var = (
+        cumulative_variance[max_components - 1] * 100)
+
+    st.metric(
+        "Total Explained Variance",
+        f"{explained_var:.2f}%"
+    )
+
+    st.subheader(
+        "Visualisasi Mean Face"
+    )
+
+    show_mean_face(
+        mean_face
+    )
+
+    eigenfaces = eigenfaces_all[
+        :jumlah_komponen
+    ]
+
+    database_features = project_faces(
+        X_centered_train,
+        eigenfaces
+    )
+    correct_cosine = 0
+
+    for x_test, true_label in zip(
+        X_test,
+        y_test
+    ):
+
+        centered = (
+            x_test -
+            mean_face
+        )
+
+        feature = np.dot(
+            centered,
+            eigenfaces.T
+        )
+
+        pred = predict_cosine(
+            feature,
+            database_features,
+            y_train
+        )
+
+        if pred == true_label:
+            correct_cosine += 1
+
+    accuracy_cosine = (
+        correct_cosine /
+        len(X_test)
+    ) * 100
+    correct_euclidean = 0
+
+    for x_test, true_label in zip(
+        X_test,
+        y_test
+    ):
+
+        centered = (
+            x_test -
+            mean_face
+        )
+
+        feature = np.dot(
+            centered,
+            eigenfaces.T
+        )
+
+        pred = predict_euclidean(
+            feature,
+            database_features,
+            y_train
+        )
+
+        if pred == true_label:
+            correct_euclidean += 1
+
+    accuracy_euclidean = (
+        correct_euclidean /
+        len(X_test)
+    ) * 100
+    
+    col1, col2 = st.columns(2)
+
+    col1.metric(
+        "Akurasi Cosine Similarity",
+        f"{accuracy_cosine:.2f}%"
+    )
+
+    col2.metric(
+        "Akurasi Euclidean Distance",
+        f"{accuracy_euclidean:.2f}%"
+    )
+
+    st.stop()
+
 uploaded_file = st.file_uploader(
     label="", type=["jpg", "jpeg", "png"],
     label_visibility="collapsed",
@@ -408,7 +661,7 @@ uploaded_file = st.file_uploader(
 
 if uploaded_file:
     with st.spinner("Memuat dataset dan membangun ruang eigenface..."):
-        X, labels, filenames = load_dataset(DATASET_PATH, IMG_SIZE)
+        X, labels, filenames = load_dataset(DATASET_LATIH, IMG_SIZE)
         X_centered, mean_face = center_data(X)
         eigenfaces = compute_pca_svd(X_centered, jumlah_komponen)
         database_features = project_faces(X_centered, eigenfaces)
@@ -420,6 +673,7 @@ if uploaded_file:
         f'<div class="section-label">'
         f'<div class="section-dot"></div>'
         f'<span class="section-title">Kompresi Gambar via PCA</span>'
+        f'<span class="section-sub">RGB · Berwarna</span>'
         f'</div>',
         unsafe_allow_html=True
     )
@@ -429,11 +683,11 @@ if uploaded_file:
         st.markdown('<span class="img-label">↳ Gambar Asli</span>', unsafe_allow_html=True)
         st.image(image, use_container_width=True)
 
-    with st.spinner("Mengompresi gambar dengan PCA..."):
-        compressed = compress_image_pca(image, jumlah_komponen)
+    with st.spinner("Mengompresi gambar dengan PCA (RGB)..."):
+        compressed = compress_image_pca_color(image, jumlah_komponen)
 
     with col2:
-        st.markdown('<span class="img-label">↳ Hasil Rekonstruksi PCA</span>', unsafe_allow_html=True)
+        st.markdown('<span class="img-label">↳ Hasil Rekonstruksi PCA (Berwarna)</span>', unsafe_allow_html=True)
         st.image(compressed, use_container_width=True)
 
     size_before = len(uploaded_file.getvalue())
@@ -475,17 +729,21 @@ if uploaded_file:
         f'<div class="section-label">'
         f'<div class="section-dot"></div>'
         f'<span class="section-title">Hasil Pencocokan Wajah</span>'
-        f'<span class="section-sub">Top-3 · Cosine Similarity</span>'
+        f'<span class="section-sub">Top-1 · Cosine Similarity · RGB</span>'
         f'</div>',
         unsafe_allow_html=True
     )
 
+    # Simpan gambar ASLI (bukan yang dikompres) ke file sementara untuk pencocokan
+    temp_original = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+    image.convert("RGB").save(temp_original.name)
+
     with st.spinner("Menghitung kemiripan di ruang eigenface..."):
-        test_feature = extract_feature(temp_buffer.name, mean_face, eigenfaces, IMG_SIZE)
+        test_feature = extract_feature(temp_original.name, mean_face, eigenfaces, IMG_SIZE)
         results = recognize_cosine_topk(test_feature, database_features, labels, filenames, k=1)
 
     badge_info = [
-        ("gold",   "★ Kecocokan Terbaik"),
+        ("gold", "★ Kecocokan Terbaik"),
     ]
 
     res_cols = st.columns(3, gap="medium")
@@ -493,7 +751,6 @@ if uploaded_file:
         with res_cols[i]:
             img_path = os.path.join(DATASET_PATH, lbl, file)
             badge_class, badge_text = badge_info[i]
-            pct = int(score * 100)
             is_best = "best" if i == 0 else ""
 
             st.markdown(
@@ -521,7 +778,7 @@ if uploaded_file:
     st.markdown(
         f'<div style="text-align:center;padding:3rem 0 1.5rem;border-top:1px solid {border_soft};margin-top:2rem;">'
         f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.65rem;color:{footer_color};'
-        f'letter-spacing:0.12em;text-transform:uppercase;">PCA · SVD · Eigenfaces · Cosine Similarity</div>'
+        f'letter-spacing:0.12em;text-transform:uppercase;">PCA · SVD · Eigenfaces · Cosine Similarity · RGB</div>'
         f'</div>',
         unsafe_allow_html=True
     )
