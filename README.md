@@ -7,6 +7,8 @@ note: code pada sistem deteksi wajah tidak 100% akurat
 Gambar yang diunggah dikompres dan diubah warnanya menjadi gray setelah diubah
 foto tersebut di bandingkan dengan foto yang ada di dataset
 
-
 https://deteksi-kemiripan-wajah-app-8sxap7afaof8rexrg4fxqm.streamlit.app/?theme=light
+
+Update selanjutnya bisa upload 2 file dan akan dibandingkan file tersebut
 ```
+
