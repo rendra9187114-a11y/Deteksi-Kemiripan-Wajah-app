@@ -294,7 +294,7 @@ def extract_feature(image_path, mean_face, eigenfaces, img_size=(100, 100)):
     centered = vector - mean_face
     return np.dot(centered, eigenfaces.T)
 
-def recognize_cosine_topk(test_feature, database_features, labels, filenames, k=3):
+def recognize_cosine_topk(test_feature, database_features, labels, filenames, k=2):
     results = []
     test_feature = test_feature.reshape(1, -1)
     for feature, label, file in zip(database_features, labels, filenames):
@@ -502,15 +502,14 @@ if uploaded_file:
 
     with st.spinner("Menghitung kemiripan di ruang eigenface..."):
         test_feature = extract_feature(temp_buffer.name, mean_face, eigenfaces, IMG_SIZE)
-        results = recognize_cosine_topk(test_feature, database_features, labels, filenames, k=3)
+        results = recognize_cosine_topk(test_feature, database_features, labels, filenames, k=2)
 
     badge_info = [
         ("gold",   "★ Kecocokan Terbaik"),
         ("silver", "◈ Peringkat 2"),
-        ("bronze", "◇ Peringkat 3"),
     ]
 
-    res_cols = st.columns(3, gap="medium")
+    res_cols = st.columns(2, gap="medium")
     for i, (lbl, file, score) in enumerate(results):
         with res_cols[i]:
             img_path = os.path.join(DATASET_PATH, lbl, file)
