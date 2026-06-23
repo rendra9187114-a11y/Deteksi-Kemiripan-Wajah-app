@@ -493,19 +493,14 @@ st.markdown(
 )
 
 DATASET_PATH = "FaceSimilarityApp/dataset"
-DATASET_LATIH = "FaceSimilarityApp/dataset_latih_uji"
 IMG_SIZE = (100, 100)
 
 if not os.path.exists(DATASET_PATH):
     st.error("⚠️ Direktori `dataset` tidak ditemukan. Pastikan folder tersedia di lokasi yang sama dengan skrip ini.")
     st.stop()
-    
-if not os.path.exists(DATASET_LATIH):
-    st.error("⚠️ Direktori `dataset` tidak ditemukan. Pastikan folder tersedia di lokasi yang sama dengan skrip ini.")
-    st.stop()
 
 X, labels, filenames = load_dataset(
-    DATASET_LATIH,
+    DATASET_PATH,
     IMG_SIZE
 )
 
@@ -530,6 +525,9 @@ st.markdown(
 if menu == "EDA & Evaluasi":
     
     st.header("Laporan Model")
+    st.write("Kalau muncul")
+    st.write("(IndexError: index 109 is out of bounds for axis 0 with size 48)")
+    st,write("turunkan bar komponen pca dibawah'with size 48'")
 
     st.write(
         f"Total Data : {len(X)} gambar"
@@ -553,13 +551,11 @@ if menu == "EDA & Evaluasi":
         )
     )
 
-    max_components = len(cumulative_variance)
-    explained_var = (
-        cumulative_variance[max_components - 1] * 100)
+    total_var = cumulative_variance[jumlah_komponen - 1] * 100
 
     st.metric(
         "Total Explained Variance",
-        f"{explained_var:.2f}%"
+        f"{total_var:.2f}%"
     )
 
     st.subheader(
@@ -661,7 +657,7 @@ uploaded_file = st.file_uploader(
 
 if uploaded_file:
     with st.spinner("Memuat dataset dan membangun ruang eigenface..."):
-        X, labels, filenames = load_dataset(DATASET_LATIH, IMG_SIZE)
+        X, labels, filenames = load_dataset(DATASET_PATH, IMG_SIZE)
         X_centered, mean_face = center_data(X)
         eigenfaces = compute_pca_svd(X_centered, jumlah_komponen)
         database_features = project_faces(X_centered, eigenfaces)
