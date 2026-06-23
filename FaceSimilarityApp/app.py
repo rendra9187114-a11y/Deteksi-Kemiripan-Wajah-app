@@ -301,14 +301,6 @@ def load_dataset(dataset_path, img_size=(100, 100)):
                 data.append(vector)
                 labels.append(person_name)
                 filenames.append(file)
-                st.write("Membaca:", path)
-
-                vector = preprocess_image(path, img_size)
-
-                if vector is not None:
-                    st.write("Berhasil")
-                else:
-                    st.write("Gagal")
     return np.array(data), labels, filenames
 
 def center_data(X):
