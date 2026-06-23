@@ -505,12 +505,6 @@ X, labels, filenames = load_dataset(
     IMG_SIZE
 )
 
-st.write("Total data terbaca:", len(X))
-
-for label in sorted(set(labels)):
-    jumlah = labels.count(label)
-    st.write(label, ":", jumlah)
-
 X_train, X_test, y_train, y_test, train_files, test_files = train_test_split(
     X,
     labels,
