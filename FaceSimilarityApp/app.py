@@ -1,14 +1,16 @@
+# python -m streamlit run app.py
+
 import streamlit as st
 import cv2
 import numpy as np
 import os
 import tempfile
+import matplotlib.pyplot as plt
 
 from PIL import Image
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.model_selection import train_test_split
 from scipy.spatial.distance import euclidean
-import matplotlib.pyplot as plt
 
 st.set_page_config(
     page_title="Deteksi Kemiripan Wajah",
@@ -220,9 +222,11 @@ h1, h2, h3 {{ color: {text_primary} !important; }}
 """
 st.markdown(css, unsafe_allow_html=True)
 
+#=========================
+# FUNGSI
+#=========================
 if not st.session_state.theme_override:
     st.markdown(THEME_DETECT_JS, unsafe_allow_html=True)
-
 
 # ── KOMPRESI PCA BERWARNA (RGB) ──────────────────────────────────────────────
 def compress_image_pca_color(image, n_components=150):
@@ -247,9 +251,66 @@ def compress_image_pca_color(image, n_components=150):
 
     color_img = np.stack(channels, axis=2)
     return Image.fromarray(color_img)
+    return compressed
 
+#Fungsi kompres PCA Gray
+def compress_image_pca_gray(image, n_components=150):
+    """
+    Kompresi PCA grayscale.
+    Input : RGB
+    Output: Grayscale
+    """
 
-# ── PREPROCESSING UNTUK PENCOCOKAN: BERWARNA (RGB flatten) ───────────────────
+    img_gray = image.convert("L")
+
+    matrix = np.array(img_gray).astype(float) / 255.0
+
+    mean = np.mean(matrix, axis=0)
+
+    centered = matrix - mean
+
+    cov = np.cov(
+        centered,
+        rowvar=False
+    )
+
+    eigvals, eigvecs = np.linalg.eigh(cov)
+
+    idx = np.argsort(eigvals)[::-1]
+
+    eigvecs = eigvecs[:, idx]
+
+    n_components = min(
+        n_components,
+        eigvecs.shape[1]
+    )
+
+    components = eigvecs[:, :n_components]
+
+    projected = np.dot(
+        centered,
+        components
+    )
+
+    reconstructed = np.dot(
+        projected,
+        components.T
+    ) + mean
+
+    reconstructed = np.clip(
+        reconstructed * 255,
+        0,
+        255
+    ).astype(np.uint8)
+
+    return Image.fromarray(
+        reconstructed,
+        mode="L"
+    )
+
+#===========================================
+#  PREPROCESSING UNTUK PENCOCOKAN
+#===========================================
 def preprocess_image_color(path, img_size=(100, 100)):
     """Baca gambar berwarna, resize, dan flatten menjadi vektor."""
     img = cv2.imread(path)
@@ -297,7 +358,6 @@ def load_dataset(dataset_path, img_size=(100, 100)):
         for file in os.listdir(person_folder):
             if file.lower().endswith((".jpg", ".jpeg", ".png")):
                 path = os.path.join(person_folder, file)
-                vector = preprocess_image_color(path, img_size)
                 vector = preprocess_image(path, img_size)
                 data.append(vector)
                 labels.append(person_name)
@@ -332,6 +392,34 @@ def recognize_cosine_topk(test_feature, database_features, labels, filenames, k=
         results.append((label, file, score))
     results.sort(key=lambda x: x[2], reverse=True)
     return results[:k]
+
+def compare_two_faces(
+    img1_path,
+    img2_path,
+    mean_face,
+    eigenfaces
+):
+
+    feature1 = extract_feature(
+        img1_path,
+        mean_face,
+        eigenfaces,
+        IMG_SIZE
+    )
+
+    feature2 = extract_feature(
+        img2_path,
+        mean_face,
+        eigenfaces,
+        IMG_SIZE
+    )
+
+    similarity = cosine_similarity(
+        feature1.reshape(1, -1),
+        feature2.reshape(1, -1)
+    )[0][0]
+
+    return similarity
 
 def compute_pca_svd_variance(X_centered):
     U, S, VT = np.linalg.svd(
@@ -383,14 +471,50 @@ def show_mean_face(
         IMG_SIZE[0],
         IMG_SIZE[1],
         3
-    ).astype(np.uint8)
+    )
+    mean_img = cv2.cvtColor(
+        mean_img.astype(np.uint8),
+        cv2.COLOR_RGB2GRAY
+    )
     st.image(
         mean_img,
         caption="Mean Face Dataset",
-        width=300
+        width=300, clamp=True
     )
 
-# ── SIDEBAR ───────────────────────────────────────────────────────────────────
+def extract_face_image(path, img_size=(100, 100)):
+    img = cv2.imread(path)
+
+    if img is None:
+        return None
+
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    face_cascade = cv2.CascadeClassifier(
+        cv2.data.haarcascades +
+        "haarcascade_frontalface_default.xml"
+    )
+
+    faces = face_cascade.detectMultiScale(
+        gray,
+        scaleFactor=1.1,
+        minNeighbors=5,
+        minSize=(30, 30)
+    )
+
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+    if len(faces) > 0:
+        x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
+        img_rgb = img_rgb[y:y+h, x:x+w]
+
+    img_rgb = cv2.resize(img_rgb, img_size)
+
+    return img_rgb
+
+#========================================
+# ── SIDEBAR 
+#========================================
 with st.sidebar:
     col_toggle, col_space = st.columns([1.5, 4])
     
@@ -407,6 +531,7 @@ with st.sidebar:
     btn_bg = "rgba(250,204,21,0.18)" if is_dark else "rgba(99,102,241,0.22)"
     btn_border = "rgba(250,204,21,0.6)" if is_dark else "rgba(99,102,241,0.6)"
     btn_shadow = "0 0 10px rgba(250,204,21,0.35)" if is_dark else "0 0 10px rgba(99,102,241,0.4)"
+    
     st.markdown(f"""
     <style>
     [data-testid="stSidebar"] button[kind="secondary"] {{
@@ -436,27 +561,14 @@ with st.sidebar:
         unsafe_allow_html=True
     )
 
-    jumlah_komponen = st.slider(
-        label="", min_value=1, max_value=150, value=12, step=1,
-        label_visibility="collapsed"
-    )
-    
     menu = st.radio(
         "Menu",
         [
-            "Deteksi Wajah",
-            "EDA & Evaluasi"
+            "EDA & Evaluasi",
+            "Kompres Foto",
+            "Deteksi Wajah dengan dataset",
+            "Deteksi Wajah (Lama dan Sekarang)"
         ]
-    )
-    st.markdown(
-        f'<div style="background:{accent_dim};border:1px solid {border};border-radius:10px;padding:1rem;margin-top:0.8rem;">'
-        f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.65rem;color:{accent};'
-        f'text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.5rem;">Parameter Aktif</div>'
-        f'<div style="display:flex;justify-content:space-between;align-items:center;">'
-        f'<span style="color:{text_muted};font-size:0.8rem;">n_components</span>'
-        f'<span style="font-family:\'JetBrains Mono\',monospace;font-size:0.9rem;font-weight:600;color:{text_mono_v};">{jumlah_komponen}</span>'
-        f'</div></div>',
-        unsafe_allow_html=True
     )
 
     st.markdown(
@@ -485,10 +597,10 @@ with st.sidebar:
 # ── HERO ──────────────────────────────────────────────────────────────────────
 st.markdown(
     f'<div class="hero-header">'
-    f'<div class="hero-badge">⬡ PCA · SVD · Cosine Similarity</div>'
+    f'<div class="hero-badge">⬡ PCA · SVD · Cosine Similarity · Kompres</div>'
     f'<div class="hero-title">Deteksi Kemiripan Wajah</div>'
-    f'<div class="hero-subtitle">Kompresi gambar berwarna dengan Principal Component Analysis dan temukan '
-    f'identitas wajah terdekat dari dataset menggunakan eigenface projection.</div>'
+    f'<div class="hero-subtitle">Kompresi gambar dengan Principal Component Analysis dan temukan '
+    f'identitas wajah terdekat dari dataset dan Foto Dulu Dan sekarang menggunakan eigenface projection.</div>'
     f'</div>',
     unsafe_allow_html=True
 )
@@ -514,21 +626,21 @@ X_train, X_test, y_train, y_test, train_files, test_files = train_test_split(
     random_state=42
 )
 
-st.markdown(
-    f'<div class="section-label">'
-    f'<div class="section-dot"></div>'
-    f'<span class="section-title">Unggah Gambar Wajah</span>'
-    f'<span class="section-sub">JPG / JPEG / PNG</span>'
-    f'</div>',
-    unsafe_allow_html=True
-)
+#=======================
+# MENU
+#=======================
 
+#menu ke 1
 if menu == "EDA & Evaluasi":
     
-    st.header("Laporan Model")
-    st.write("Kalau muncul")
-    st.write("(IndexError: ...)")
-    st.write("turunkan bar komponen pca dibawah jumlah data 'latih'")
+    st.subheader("Laporan Model")
+    st.write(
+            f"Komponen PCA"
+        )
+    jumlah_komponen_evaluasi = st.slider(
+            label="", min_value=1, max_value=150, value=10, step=1,
+            label_visibility="collapsed"
+        )
 
     st.write(
         f"Total Data : {len(X)} gambar"
@@ -552,7 +664,8 @@ if menu == "EDA & Evaluasi":
         )
     )
 
-    total_var = cumulative_variance[jumlah_komponen - 1] * 100
+    komponen = len(X_train)
+    total_var = cumulative_variance[jumlah_komponen_evaluasi - 1] * 100
 
     st.metric(
         "Total Explained Variance",
@@ -566,9 +679,9 @@ if menu == "EDA & Evaluasi":
     show_mean_face(
         mean_face
     )
-
+    
     eigenfaces = eigenfaces_all[
-        :jumlah_komponen
+        :jumlah_komponen_evaluasi
     ]
 
     database_features = project_faces(
@@ -627,7 +740,6 @@ if menu == "EDA & Evaluasi":
             database_features,
             y_train
         )
-
         if pred == true_label:
             correct_euclidean += 1
 
@@ -648,134 +760,634 @@ if menu == "EDA & Evaluasi":
         f"{accuracy_euclidean:.2f}%"
     )
 
-    st.stop()
-
-uploaded_file = st.file_uploader(
-    label="", type=["jpg", "jpeg", "png"],
-    label_visibility="collapsed",
-    help="Format yang didukung: JPG, JPEG, PNG"
-)
-
-if uploaded_file:
-    with st.spinner("Memuat dataset dan membangun ruang eigenface..."):
-        X, labels, filenames = load_dataset(DATASET_PATH, IMG_SIZE)
-        X_centered, mean_face = center_data(X)
-        eigenfaces = compute_pca_svd(X_centered, jumlah_komponen)
-        database_features = project_faces(X_centered, eigenfaces)
-
-    image = Image.open(uploaded_file)
-    st.markdown("<hr>", unsafe_allow_html=True)
+#menu ke 2
+elif menu == "Kompres Foto":
+    st.subheader("Kompresi Gambar")
 
     st.markdown(
-        f'<div class="section-label">'
-        f'<div class="section-dot"></div>'
-        f'<span class="section-title">Kompresi Gambar via PCA</span>'
-        f'<span class="section-sub">RGB · Berwarna</span>'
-        f'</div>',
-        unsafe_allow_html=True
+            f'<div class="section-label">'
+            f'<div class="section-dot"></div>'
+            f'<span class="section-title">Unggah Gambar</span>'
+            f'<span class="section-sub">JPG / JPEG / PNG</span>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+    
+    uploaded_file_kompres = st.file_uploader(
+        label="", type=["jpg", "jpeg", "png"],
+        label_visibility="collapsed",
+        help="Format yang didukung: JPG, JPEG, PNG"
     )
+    
+    if uploaded_file_kompres:
+        st.markdown(
+            f'</div></div>',
+            unsafe_allow_html=True
+        )
+        format_output = st.selectbox("Pilih Format Output:", ["JPEG", "PNG", "WEBP"])
+        
+        if format_output in ["JPEG", "WEBP"]:
+            # slide PCA
+            st.markdown(
+                        f'<div class="section-label">'
+                        f'<div class="section-dot"></div>'
+                        f'<span class="section-title">Kualitas</span>'
+                        f'<span class="section-sub">%</span>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+            
+            kualitas = st.slider(
+                    label="Quality", min_value=1, max_value=95, value=10, step=1,
+                    label_visibility="collapsed"
+                )
+            
+            st.markdown(
+                f'<div style="background:{accent_dim};border:1px solid {border};border-radius:10px;padding:1rem;margin-top:0.8rem;">'
+                f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.65rem;color:{accent};'
+                f'text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.5rem;">Parameter</div>'
+                f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                f'<span style="color:{text_muted};font-size:1.5rem;">Quality</span>'
+                f'<span style="font-family:\'JetBrains Mono\',monospace;font-size:2rem;font-weight:600;color:{text_mono_v};">{kualitas}</span>'
+                f'</div></div>',
+                unsafe_allow_html=True
+            )
+    
+        image = Image.open(uploaded_file_kompres)
+        st.markdown("<hr>", unsafe_allow_html=True)
 
-    col1, col2 = st.columns(2, gap="large")
-    with col1:
-        st.markdown('<span class="img-label">↳ Gambar Asli</span>', unsafe_allow_html=True)
-        st.image(image, use_container_width=True)
+        st.markdown(
+            f'<div class="section-label">'
+            f'<div class="section-dot"></div>'
+            f'<span class="section-title">Kompresi Gambar</span>'
+            f'<span class="section-sub">MEMBANDINGKAN</span>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+        
+        col1, col2 = st.columns(2, gap="large")
+        with col1:
+            st.markdown('<span class="img-label">↳ Gambar Asli</span>', unsafe_allow_html=True)
+            st.image(image, use_container_width=True)
+    
+        with st.spinner("Mengompresi gambar..."):
+            # Kompres langsung ke JPEG dengan kualitas tertentu
+            temp_buffer = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+            if format_output == "JPEG":
+                image.save(temp_buffer.name, format_output, quality=kualitas, optimize=True)
+            elif format_output == "WebP":
+                image.save(temp_buffer.name, format_output, quality=kualitas)
+            else:
+                image.save(temp_buffer.name, format_output, optimize=True)
+            compressed = Image.open(temp_buffer.name)
 
-    with st.spinner("Mengompresi gambar dengan PCA (RGB)..."):
-        compressed = compress_image_pca_color(image, jumlah_komponen)
+        with col2:
+            st.markdown('<span class="img-label">↳ Hasil Kompres</span>', unsafe_allow_html=True)
+            st.image(compressed, use_container_width=True)
+        
+        size_before = len(uploaded_file_kompres.getvalue())
+        temp_buffer = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+        compressed.save(temp_buffer.name)
+        size_after = os.path.getsize(temp_buffer.name)
+        reduction = ((size_before - size_after) / size_before) * 100
+        reduction_color = "green" if reduction > 0 else "accent"
 
-    with col2:
-        st.markdown('<span class="img-label">↳ Hasil Rekonstruksi PCA (Berwarna)</span>', unsafe_allow_html=True)
-        st.image(compressed, use_container_width=True)
+        st.markdown(
+            f'<div class="metric-row">'
+            f'<div class="metric-tile" style="text-align:center;">'
+            f'<div class="metric-label">Ukuran Asli</div>'
+            f'<div class="metric-value">{size_before/1024:.1f} KB</div>'
+            f'</div>'
+            f'<div class="metric-tile" style="text-align:center;">'
+            f'<div class="metric-label">Setelah Kompresi</div>'
+            f'<div class="metric-value accent">{size_after/1024:.1f} KB</div>'
+            f'</div>'
+            f'<div class="metric-tile" style="text-align:center;">'
+            f'<div class="metric-label">Rasio Pengurangan</div>'
+            f'<div class="metric-value {reduction_color}">{abs(reduction):.1f}%</div>'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
 
-    size_before = len(uploaded_file.getvalue())
-    temp_buffer = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
-    compressed.save(temp_buffer.name)
-    size_after = os.path.getsize(temp_buffer.name)
-    reduction = ((size_before - size_after) / size_before) * 100
-    reduction_color = "green" if reduction > 0 else "accent"
 
+        st.markdown("<br>", unsafe_allow_html=True)
+        col_left, col_btn, col_right = st.columns([1, 1, 1])
+        with col_btn:
+            with open(temp_buffer.name, "rb") as f:
+                st.download_button(
+                    label=f"⬇ Unduh Gambar ({format_output})",
+                    data=f,
+                    file_name=f"compressed_{uploaded_file_kompres.name.split('.')[0]}.{format_output.lower()}",
+                    mime=f"image/{format_output.lower()}",
+                    use_container_width=True
+                )
+
+#menu ke 3
+elif menu == "Deteksi Wajah dengan dataset":
+    
+    st.subheader("Deteksi Wajah")
+    jumlah_komponen_wajah_dataset = st.slider(
+                label="", min_value=1, max_value=150, value=50, step=1,
+                label_visibility="collapsed"
+            )
+    
     st.markdown(
-        f'<div class="metric-row">'
-        f'<div class="metric-tile"><div class="metric-label">Ukuran Asli</div>'
-        f'<div class="metric-value">{size_before/1024:.1f}<span style="font-size:0.9rem;color:{text_faint};"> KB</span></div></div>'
-        f'<div class="metric-tile"><div class="metric-label">Setelah Kompresi</div>'
-        f'<div class="metric-value accent">{size_after/1024:.1f}<span style="font-size:0.9rem;color:{text_faint};"> KB</span></div></div>'
-        f'<div class="metric-tile"><div class="metric-label">Rasio Pengurangan</div>'
-        f'<div class="metric-value {reduction_color}">{abs(reduction):.1f}<span style="font-size:0.9rem;color:{text_faint};">%</span></div></div>'
-        f'<div class="metric-tile"><div class="metric-label">Komponen PCA</div>'
-        f'<div class="metric-value" style="color:{text_mono_v};">{jumlah_komponen}<span style="font-size:0.9rem;color:{text_faint};"> dims</span></div></div>'
-        f'</div>',
-        unsafe_allow_html=True
+            f'<div class="section-label">'
+            f'<div class="section-dot"></div>'
+            f'<span class="section-title">Unggah Gambar</span>'
+            f'<span class="section-sub">JPG / JPEG / PNG</span>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+    
+    uploaded_file_wajah_dataset = st.file_uploader(
+        label="", type=["jpg", "jpeg", "png", "webp"],
+        label_visibility="collapsed",
+        help="Format yang didukung: JPG, JPEG, PNG"
     )
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    col_left, col_btn, col_right = st.columns([1, 1, 1])
-    with col_btn:
-        with open(temp_buffer.name, "rb") as f:
-            st.download_button(
-                label="⬇ Unduh Gambar Rekonstruksi PCA",
-                data=f,
-                file_name=f"pca_{uploaded_file.name}",
-                mime="image/jpeg",
-                use_container_width=True
+    if uploaded_file_wajah_dataset:
+        with st.spinner("Memuat dataset dan membangun ruang eigenface..."):
+            X, labels, filenames = load_dataset(DATASET_PATH, IMG_SIZE)
+            X_centered, mean_face_gray = center_data(X)
+            eigenfaces = compute_pca_svd(X_centered, jumlah_komponen_wajah_dataset)
+            database_features = project_faces(X_centered, eigenfaces)
+
+        image = Image.open(uploaded_file_wajah_dataset)
+        st.markdown("<hr>", unsafe_allow_html=True)
+
+        st.markdown(
+            f'<div class="section-label">'
+            f'<div class="section-dot"></div>'
+            f'<span class="section-title">Kompresi Gambar via PCA</span>'
+            f'<span class="section-sub">RGB · Berwarna</span>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+        col1, col2 = st.columns(2, gap="large")
+        with col1:
+            st.markdown('<span class="img-label">↳ Gambar Asli</span>', unsafe_allow_html=True)
+            st.image(image, use_container_width=True)
+
+        with st.spinner("Mengompresi gambar dengan PCA (RGB)..."):
+            compressed = compress_image_pca_gray(image, jumlah_komponen_wajah_dataset)
+            compressed_temp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+            compressed.save(compressed_temp.name)
+
+        with col2:
+            st.markdown('<span class="img-label">↳ Hasil Rekonstruksi PCA (Berwarna)</span>', unsafe_allow_html=True)
+            st.image(compressed, use_container_width=True)
+
+        size_before = len(uploaded_file_wajah_dataset.getvalue())
+        temp_buffer = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+        compressed.save(temp_buffer.name)
+        size_after = os.path.getsize(temp_buffer.name)
+        reduction = ((size_before - size_after) / size_before) * 100
+        reduction_color = "green" if reduction > 0 else "accent"
+
+        st.markdown(
+            f'<div class="metric-row">'
+            f'<div class="metric-tile" style="text-align:center;">'
+            f'<div class="metric-label">Ukuran Asli</div>'
+            f'<div class="metric-value">{size_before/1024:.1f} KB</div>'
+            f'</div>'
+            f'<div class="metric-tile" style="text-align:center;">'
+            f'<div class="metric-label">Setelah Kompresi</div>'
+            f'<div class="metric-value accent">{size_after/1024:.1f} KB</div>'
+            f'</div>'
+            f'<div class="metric-tile" style="text-align:center;">'
+            f'<div class="metric-label">Rasio Pengurangan</div>'
+            f'<div class="metric-value {reduction_color}">{abs(reduction):.1f}%</div>'
+            f'</div>'
+            f'<div class="metric-tile" style="text-align:center;">'
+            f'<div class="metric-tile"><div class="metric-label">Komponen PCA</div>'
+            f'<div class="metric-value" style="color:{text_mono_v};">{jumlah_komponen_wajah_dataset}<span style="font-size:0.9rem;color:{text_faint};"> dims</span></div></div>'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        col_left, col_btn, col_right = st.columns([1, 1, 1])
+        with col_btn:
+            with open(temp_buffer.name, "rb") as f:
+                st.download_button(
+                    label="⬇ Unduh Gambar Rekonstruksi PCA",
+                    data=f,
+                    file_name=f"pca_{uploaded_file_wajah_dataset.name}",
+                    mime="image/jpeg",
+                    use_container_width=True
+                )
+
+        st.markdown("<hr>", unsafe_allow_html=True)
+
+        st.markdown(
+            f'<div class="section-label">'
+            f'<div class="section-dot"></div>'
+            f'<span class="section-title">Hasil Pencocokan Wajah</span>'
+            f'<span class="section-sub">Top-1 · Cosine Similarity · RGB</span>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+        # Simpan gambar ASLI (bukan yang dikompres) ke file sementara untuk pencocokan
+        temp_original = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+        image.convert("RGB").save(temp_original.name)
+
+        with st.spinner("Menghitung kemiripan di ruang eigenface..."):
+            test_feature = extract_feature(compressed_temp.name, mean_face_gray, eigenfaces, IMG_SIZE)
+            # ==========================
+            # VISUALISASI MEAN FACE
+            # ==========================
+
+            st.markdown("### Visualisasi Mean Face vs Wajah Upload")
+
+            upload_face = extract_face_image(
+                compressed_temp.name,
+                IMG_SIZE
+            )
+            
+            upload_face_gray = cv2.cvtColor(
+                upload_face,
+                cv2.COLOR_RGB2GRAY
             )
 
-    st.markdown("<hr>", unsafe_allow_html=True)
+            mean_face_img = mean_face_gray.reshape(
+                IMG_SIZE[0],
+                IMG_SIZE[1],
+                3
+            )
 
+            mean_face_img = cv2.cvtColor(
+                mean_face_img.astype(np.uint8),
+                cv2.COLOR_RGB2GRAY
+            )
+
+            # normalisasi mean face agar bisa dilihat
+            mean_face_img = mean_face_img - mean_face_img.min()
+            mean_face_img = mean_face_img / mean_face_img.max()
+            mean_face_img = (mean_face_img * 255).astype(np.uint8)
+
+            col_a, col_b = st.columns(2)
+
+            with col_a:
+                st.image(
+                    upload_face,
+                    caption="Wajah Upload", #grayscale
+                    use_container_width=True,
+                    clamp = True
+                )
+
+            with col_b:
+                st.image(
+                    mean_face_img,
+                    caption="Mean Face Dataset",
+                    use_container_width=True
+                )
+
+            # ==========================
+            # KEMIRIPAN DENGAN MEAN FACE
+            # ==========================
+
+            upload_vector = upload_face_gray.flatten().astype(float)
+
+            mean_vector = mean_face_img.flatten().astype(float)
+
+            similarity_mean = cosine_similarity(
+                upload_vector.reshape(1, -1),
+                mean_vector.reshape(1, -1)
+            )[0][0]
+
+            st.metric(
+                "Kemiripan Upload vs Mean Face",
+                f"{similarity_mean*100:.2f}%"
+            )
+            results = recognize_cosine_topk(test_feature, database_features, labels, filenames, k=2)
+
+        badge_info = [
+            ("gold", "Kecocokan Pertama"),
+            ("silver", "Kecocokan Kedua")
+        ]
+
+        res_cols = st.columns(3, gap="medium")
+        for i, (lbl, file, score) in enumerate(results):
+            with res_cols[i]:
+                img_path = os.path.join(DATASET_PATH, lbl, file)
+                badge_class, badge_text = badge_info[i]
+                is_best = "best" if i == 0 else ""
+
+                st.markdown(
+                    f'<div class="result-card {is_best}">'
+                    f'<div class="rank-badge {badge_class}">{badge_text}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+                
+                st.image(img_path, use_container_width=False)
+
+                st.markdown(
+                    f'<div style="text-align:center;margin-top:0.5rem;">'
+                    f'<div class="identity-name">{lbl}</div>'
+                    f'<div class="identity-file" style="margin-bottom:0.8rem;">{file}</div>'
+                    f'<div class="score-container">'
+                    f'<div class="score-header">'
+                    f'<span class="score-label-text">Kemiripan</span>'
+                    f'<span class="score-number">{score:.4f}</span>'
+                    f'</div>'
+                    f'</div></div>',
+                    unsafe_allow_html=True
+                )
+
+        st.markdown(
+            f'<div style="text-align:center;padding:3rem 0 1.5rem;border-top:1px solid {border_soft};margin-top:2rem;">'
+            f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.65rem;color:{footer_color};'
+            f'letter-spacing:0.12em;text-transform:uppercase;">PCA · SVD · Eigenfaces · Cosine Similarity · RGB</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+# menu ke 4
+elif menu == "Deteksi Wajah (Lama dan Sekarang)":
+    st.header("DETEKSI WAJAH LAMA DENGAN YANG SEKARANG")
+    
     st.markdown(
-        f'<div class="section-label">'
-        f'<div class="section-dot"></div>'
-        f'<span class="section-title">Hasil Pencocokan Wajah</span>'
-        f'<span class="section-sub">Top-1 · Cosine Similarity · RGB</span>'
-        f'</div>',
+                f'</div></div>',
+                unsafe_allow_html=True
+            )
+    
+    st.markdown(
+                f'<div class="section-label">'
+                f'<div class="section-dot"></div>'
+                f'<span class="section-title">Kualitas</span>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+    
+    komponen_dulu_sekarang = st.slider(
+            label="Quality", min_value=1, max_value=150, value=50, step=1,
+            label_visibility="collapsed"
+        )
+    
+    st.markdown(
+        f'<div style="background:{accent_dim};border:1px solid {border};border-radius:10px;padding:1rem;margin-top:0.8rem;">'
+        f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.65rem;color:{accent};'
+        f'text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.5rem;">Parameter Aktif</div>'
+        f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+        f'<span style="color:{text_muted};font-size:1.5rem;">n_components</span>'
+        f'<span style="font-family:\'JetBrains Mono\',monospace;font-size:2rem;font-weight:600;color:{text_mono_v};">{komponen_dulu_sekarang}</span>'
+        f'</div></div>',
+        unsafe_allow_html=True
+    )
+    
+    st.markdown(
+        """
+        <div style="display:flex;gap:2rem;justify-content:center;">
+            <div style="flex:1;text-align:center;">
+                <div class="section-label">
+                    <div class="section-dot"></div>
+                    <span class="section-title">Unggah Gambar Dulu</span>
+                    <span class="section-sub">JPG / JPEG / PNG</span>
+                </div>
+            </div>
+            <div style="flex:1;text-align:center;">
+                <div class="section-label">
+                    <div class="section-dot"></div>
+                    <span class="section-title">Unggah Gambar Sekarang</span>
+                    <span class="section-sub">JPG / JPEG / PNG</span>
+                </div>
+            </div>
+        </div>
+        """,
         unsafe_allow_html=True
     )
 
-    # Simpan gambar ASLI (bukan yang dikompres) ke file sementara untuk pencocokan
-    temp_original = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
-    image.convert("RGB").save(temp_original.name)
+    col1, col2 = st.columns(2)
+    with col1:
+        uploaded_file_wajah_dulu = st.file_uploader(
+            label="dulu", type=["jpg", "jpeg", "png", "webp"],
+            label_visibility="collapsed",
+            help="Format yang didukung: JPG, JPEG, PNG"
+        )
+    with col2:
+        uploaded_file_wajah_sekarang = st.file_uploader(
+            label="sekarang", type=["jpg", "jpeg", "png", "webp"],
+            label_visibility="collapsed",
+            help="Format yang didukung: JPG, JPEG, PNG"
+        )
 
-    with st.spinner("Menghitung kemiripan di ruang eigenface..."):
-        test_feature = extract_feature(temp_original.name, mean_face, eigenfaces, IMG_SIZE)
-        results = recognize_cosine_topk(test_feature, database_features, labels, filenames, k=1)
-
-    badge_info = [
-        ("gold", "★ Kecocokan Terbaik"),
-    ]
-
-    res_cols = st.columns(3, gap="medium")
-    for i, (lbl, file, score) in enumerate(results):
-        with res_cols[i]:
-            img_path = os.path.join(DATASET_PATH, lbl, file)
-            badge_class, badge_text = badge_info[i]
-            is_best = "best" if i == 0 else ""
-
+    col_dulu, col_sekarang = st.columns(2)
+    with col_dulu:
+        if uploaded_file_wajah_dulu:
+            image = Image.open(uploaded_file_wajah_dulu)
+            st.markdown("<hr>", unsafe_allow_html=True)
+        
             st.markdown(
-                f'<div class="result-card {is_best}">'
-                f'<div class="rank-badge {badge_class}">{badge_text}</div>'
+                f'<div class="section-label">'
+                f'<div class="section-dot"></div>'
+                f'<span class="section-title">Kompresi Gambar via PCA (Sekarang)</span>'
+                f'<span class="section-sub">GRAY</span>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+        
+            col1, col2 = st.columns(2, gap="large")
+            with col1:
+                st.markdown('<span class="img-label">↳ Gambar Asli</span>', unsafe_allow_html=True)
+                st.image(image, use_container_width=True)
+        
+            with st.spinner("Mengompresi gambar dengan PCA..."):
+                compressed = compress_image_pca_gray(image, komponen_dulu_sekarang)
+                compressed_temp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+                compressed.save(compressed_temp.name)
+
+            with col2:
+                st.markdown('<span class="img-label">↳ Hasil Rekonstruksi PCA</span>', unsafe_allow_html=True)
+                st.image(compressed, use_container_width=True)
+        
+            size_before = len(uploaded_file_wajah_dulu.getvalue())
+            temp_buffer = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+            compressed.save(temp_buffer.name)
+            size_after = os.path.getsize(temp_buffer.name)
+            reduction = ((size_before - size_after) / size_before) * 100
+            reduction_color = "green" if reduction > 0 else "accent"
+        
+            st.markdown(
+                f'<div class="metric-row">'
+                f'<div class="metric-tile" style="text-align:center;">'
+                f'<div class="metric-label">Ukuran Asli</div>'
+                f'<div class="metric-value">{size_before/1024:.1f} KB</div>'
+                f'</div>'
+                f'<div class="metric-tile" style="text-align:center;">'
+                f'<div class="metric-label">Setelah Kompresi</div>'
+                f'<div class="metric-value accent">{size_after/1024:.1f} KB</div>'
+                f'</div>'
+                f'<div class="metric-tile" style="text-align:center;">'
+                f'<div class="metric-label">Rasio Pengurangan</div>'
+                f'<div class="metric-value {reduction_color}">{abs(reduction):.1f}%</div>'
+                f'</div>'
                 f'</div>',
                 unsafe_allow_html=True
             )
 
-            st.image(img_path, use_container_width=True)
+    with col_sekarang:
+        if uploaded_file_wajah_sekarang:
+            image = Image.open(uploaded_file_wajah_sekarang)
+            st.markdown("<hr>", unsafe_allow_html=True)
 
             st.markdown(
-                f'<div style="text-align:center;margin-top:0.5rem;">'
-                f'<div class="identity-name">{lbl}</div>'
-                f'<div class="identity-file" style="margin-bottom:0.8rem;">{file}</div>'
-                f'<div class="score-container">'
-                f'<div class="score-header">'
-                f'<span class="score-label-text">Kemiripan</span>'
-                f'<span class="score-number">{score:.4f}</span>'
-                f'</div>'
-                f'</div></div>',
+                f'<div class="section-label">'
+                f'<div class="section-dot"></div>'
+                f'<span class="section-title">Kompresi Gambar via PCA (Sekarang)</span>'
+                f'<span class="section-sub">GRAY</span>'
+                f'</div>',
                 unsafe_allow_html=True
             )
 
-    st.markdown(
-        f'<div style="text-align:center;padding:3rem 0 1.5rem;border-top:1px solid {border_soft};margin-top:2rem;">'
-        f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.65rem;color:{footer_color};'
-        f'letter-spacing:0.12em;text-transform:uppercase;">PCA · SVD · Eigenfaces · Cosine Similarity · RGB</div>'
-        f'</div>',
-        unsafe_allow_html=True
-    )
+            col1, col2 = st.columns(2, gap="large")
+            with col1:
+                st.markdown('<span class="img-label">↳ Gambar Asli</span>', unsafe_allow_html=True)
+                st.image(image, use_container_width=True)
+        
+            with st.spinner("Mengompresi gambar dengan PCA..."):
+                compressed = compress_image_pca_gray(image, komponen_dulu_sekarang)
+                compressed_temp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+                compressed.save(compressed_temp.name)
+        
+            with col2:
+                st.markdown('<span class="img-label">↳ Hasil Rekonstruksi PCA</span>', unsafe_allow_html=True)
+                st.image(compressed, use_container_width=True)
+        
+            size_before = len(uploaded_file_wajah_sekarang.getvalue())
+            temp_buffer = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+            compressed.save(temp_buffer.name)
+            size_after = os.path.getsize(temp_buffer.name)
+            reduction = ((size_before - size_after) / size_before) * 100
+            reduction_color = "green" if reduction > 0 else "accent"
+        
+            st.markdown(
+                f'<div class="metric-row">'
+                f'<div class="metric-tile" style="text-align:center;">'
+                f'<div class="metric-label">Ukuran Asli</div>'
+                f'<div class="metric-value">{size_before/1024:.1f} KB</div>'
+                f'</div>'
+                f'<div class="metric-tile" style="text-align:center;">'
+                f'<div class="metric-label">Setelah Kompresi</div>'
+                f'<div class="metric-value accent">{size_after/1024:.1f} KB</div>'
+                f'</div>'
+                f'<div class="metric-tile" style="text-align:center;">'
+                f'<div class="metric-label">Rasio Pengurangan</div>'
+                f'<div class="metric-value {reduction_color}">{abs(reduction):.1f}%</div>'
+                f'</div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+            
+    # ====================================================
+    # PERBANDINGAN FOTO DULU VS SEKARANG
+    # ====================================================
+
+    if uploaded_file_wajah_dulu and uploaded_file_wajah_sekarang:
+        with st.spinner("Membangun model PCA..."):
+
+            X, labels, filenames = load_dataset(
+                DATASET_PATH,
+                IMG_SIZE
+            )
+
+            X_centered, mean_face = center_data(X)
+
+            eigenfaces = compute_pca_svd(
+                X_centered,
+                komponen_dulu_sekarang
+            )
+
+            database_features = project_faces(
+                X_centered,
+                eigenfaces
+            )
+
+        st.markdown("<hr>", unsafe_allow_html=True)
+
+        st.subheader("Hasil Perbandingan Wajah")
+
+        temp_dulu = tempfile.NamedTemporaryFile(
+            suffix=".jpg",
+            delete=False
+        )
+
+        temp_dulu.write(
+            uploaded_file_wajah_dulu.getvalue()
+        )
+
+        temp_dulu.close()
+
+        temp_sekarang = tempfile.NamedTemporaryFile(
+            suffix=".jpg",
+            delete=False
+        )
+
+        temp_sekarang.write(
+            uploaded_file_wajah_sekarang.getvalue()
+        )
+
+        temp_sekarang.close()
+
+        # Dataset PCA dibangun sekali
+        X, labels, filenames = load_dataset(
+            DATASET_PATH,
+            IMG_SIZE
+        )
+
+        X_centered, mean_face = center_data(X)
+
+        eigenfaces = compute_pca_svd(
+            X_centered,
+            komponen_dulu_sekarang
+        )
+
+        feature_dulu = extract_feature(
+            temp_dulu.name,
+            mean_face,
+            eigenfaces,
+            IMG_SIZE
+        )
+
+        feature_sekarang = extract_feature(
+            temp_sekarang.name,
+            mean_face,
+            eigenfaces,
+            IMG_SIZE
+        )
+
+        similarity = cosine_similarity(
+            feature_dulu.reshape(1, -1),
+            feature_sekarang.reshape(1, -1)
+        )[0][0]
+
+        st.metric(
+            "Kemiripan Wajah",
+            f"{similarity * 100:.2f}%"
+        )
+
+        if similarity >= 0.90:
+            st.success(
+                "Sangat mirip (kemungkinan orang yang sama)"
+            )
+
+        elif similarity >= 0.75:
+            st.info(
+                "Mirip"
+            )
+
+        elif similarity >= 0.60:
+            st.warning(
+                "Cukup mirip"
+            )
+
+        else:
+            st.error(
+                "Kurang mirip"
+            )
