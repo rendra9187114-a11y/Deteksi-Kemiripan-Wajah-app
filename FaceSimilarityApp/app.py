@@ -571,13 +571,6 @@ with st.sidebar:
         ]
     )
 
-    st.markdown(
-        f'<div style="margin-top:2rem;padding-top:1.5rem;border-top:1px solid {border_soft};">'
-        f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:0.65rem;color:{text_faint};'
-        f'text-transform:uppercase;letter-spacing:0.08em;margin-bottom:1rem;">Cara Kerja</div>',
-        unsafe_allow_html=True
-    )
-
 # ── HERO ──────────────────────────────────────────────────────────────────────
 st.markdown(
     f'<div class="hero-header">'
