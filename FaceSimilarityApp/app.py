@@ -597,7 +597,7 @@ with st.sidebar:
 # ── HERO ──────────────────────────────────────────────────────────────────────
 st.markdown(
     f'<div class="hero-header">'
-    f'<div class="hero-badge">⬡ PCA · SVD · Cosine Similarity · Kompres</div>'
+    f'<div class="hero-badge">⬡ PCA · SVD · Cosine Similarity · Kompres · Euclidean Distance</div>'
     f'<div class="hero-title">Deteksi Kemiripan Wajah</div>'
     f'<div class="hero-subtitle">Kompresi gambar dengan Principal Component Analysis dan temukan '
     f'identitas wajah terdekat dari dataset dan Foto Dulu Dan sekarang menggunakan eigenface projection.</div>'
