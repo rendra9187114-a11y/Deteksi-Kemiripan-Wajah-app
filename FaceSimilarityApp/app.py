@@ -578,22 +578,6 @@ with st.sidebar:
         unsafe_allow_html=True
     )
 
-    step_style = f'display:flex;align-items:flex-start;gap:0.6rem;margin-bottom:0.7rem;'
-    num_style = (
-        f'width:20px;height:20px;border-radius:50%;background:{accent_dim};'
-        f'border:1px solid {accent};display:flex;align-items:center;justify-content:center;'
-        f'font-size:0.6rem;color:{text_badge};font-weight:700;flex-shrink:0;margin-top:1px;'
-    )
-    txt_style = f'color:{text_muted};font-size:0.78rem;line-height:1.4;'
-
-    st.markdown(
-        f'<div style="{step_style}"><div style="{num_style}">1</div><span style="{txt_style}">Gambar berwarna diproyeksikan ke ruang eigenface via PCA-SVD (RGB)</span></div>'
-        f'<div style="{step_style}"><div style="{num_style}">2</div><span style="{txt_style}">Kemiripan dihitung dengan cosine similarity terhadap dataset</span></div>'
-        f'<div style="{step_style}"><div style="{num_style}">3</div><span style="{txt_style}">Top-1 dengan wajah paling mirip akan ditampilkan beserta skornya</span></div>'
-        f'</div>',
-        unsafe_allow_html=True
-    )
-
 # ── HERO ──────────────────────────────────────────────────────────────────────
 st.markdown(
     f'<div class="hero-header">'
